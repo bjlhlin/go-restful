@@ -5,12 +5,10 @@ package restful
 // that can be found in the LICENSE file.
 
 import (
-	"bufio"
 	"compress/gzip"
 	"compress/zlib"
 	"errors"
 	"io"
-	"net"
 	"net/http"
 	"strings"
 )
@@ -49,16 +47,6 @@ func (c *CompressingResponseWriter) CloseNotify() <-chan bool {
 	return c.writer.(http.CloseNotifier).CloseNotify()
 }
 
-// Flush is part of http.Flusher interface. Noop if the underlying writer doesn't support it.
-func (c *CompressingResponseWriter) Flush() {
-	flusher, ok := c.writer.(http.Flusher)
-	if !ok {
-		// writer doesn't support http.Flusher interface
-		return
-	}
-	flusher.Flush()
-}
-
 // Close the underlying compressor
 func (c *CompressingResponseWriter) Close() error {
 	if c.isCompressorClosed() {
@@ -81,23 +69,8 @@ func (c *CompressingResponseWriter) isCompressorClosed() bool {
 	return nil == c.compressor
 }
 
-// Hijack implements the Hijacker interface
-// This is especially useful when combining Container.EnabledContentEncoding
-// in combination with websockets (for instance gorilla/websocket)
-func (c *CompressingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	hijacker, ok := c.writer.(http.Hijacker)
-	if !ok {
-		return nil, nil, errors.New("ResponseWriter doesn't support Hijacker interface")
-	}
-	return hijacker.Hijack()
-}
-
 // WantsCompressedResponse reads the Accept-Encoding header to see if and which encoding is requested.
-// It also inspects the httpWriter whether its content-encoding is already set (non-empty).
-func wantsCompressedResponse(httpRequest *http.Request, httpWriter http.ResponseWriter) (bool, string) {
-	if contentEncoding := httpWriter.Header().Get(HEADER_ContentEncoding); contentEncoding != "" {
-		return false, ""
-	}
+func wantsCompressedResponse(httpRequest *http.Request) (bool, string) {
 	header := httpRequest.Header.Get(HEADER_AcceptEncoding)
 	gi := strings.Index(header, ENCODING_GZIP)
 	zi := strings.Index(header, ENCODING_DEFLATE)

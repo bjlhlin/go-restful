@@ -14,6 +14,5 @@ func (l testLogger) Print(v ...interface{}) {
 }
 
 func (l testLogger) Printf(format string, v ...interface{}) {
-	l.t.Helper()
 	l.t.Logf(format, v...)
 }

@@ -1,1 +1,0 @@
-curl http://localhost:8080/basepath/some/other/location/test.xml

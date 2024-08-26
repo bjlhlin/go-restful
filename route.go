@@ -5,6 +5,7 @@ package restful
 // that can be found in the LICENSE file.
 
 import (
+	"bytes"
 	"net/http"
 	"strings"
 )
@@ -12,21 +13,14 @@ import (
 // RouteFunction declares the signature of a function that can be bound to a Route.
 type RouteFunction func(*Request, *Response)
 
-// RouteSelectionConditionFunction declares the signature of a function that
-// can be used to add extra conditional logic when selecting whether the route
-// matches the HTTP request.
-type RouteSelectionConditionFunction func(httpRequest *http.Request) bool
-
 // Route binds a HTTP Method,Path,Consumes combination to a RouteFunction.
 type Route struct {
-	ExtensionProperties
 	Method   string
 	Produces []string
 	Consumes []string
 	Path     string // webservice root path + described path
 	Function RouteFunction
 	Filters  []FilterFunction
-	If       []RouteSelectionConditionFunction
 
 	// cached values for dispatching
 	relativePath string
@@ -39,75 +33,59 @@ type Route struct {
 	Operation               string
 	ParameterDocs           []*Parameter
 	ResponseErrors          map[int]ResponseError
-	DefaultResponse         *ResponseError
-	ReadSample, WriteSample interface{}   // structs that model an example request or response payload
-	WriteSamples            []interface{} // if more than one return types is possible (oneof) then this will contain multiple values
-
-	// Extra information used to store custom information about the route.
-	Metadata map[string]interface{}
-
-	// marks a route as deprecated
-	Deprecated bool
-
-	//Overrides the container.contentEncodingEnabled
-	contentEncodingEnabled *bool
-
-	// indicate route path has custom verb
-	hasCustomVerb bool
-
-	// if a request does not include a content-type header then
-	// depending on the method, it may return a 415 Unsupported Media
-	// Must have uppercase HTTP Method names such as GET,HEAD,OPTIONS,...
-	allowedMethodsWithoutContentType []string
+	ReadSample, WriteSample interface{} // structs that model an example request or response payload
 }
 
 // Initialize for Route
 func (r *Route) postBuild() {
 	r.pathParts = tokenizePath(r.Path)
-	r.hasCustomVerb = hasCustomVerb(r.Path)
 }
 
 // Create Request and Response from their http versions
-func (r *Route) wrapRequestResponse(httpWriter http.ResponseWriter, httpRequest *http.Request, pathParams map[string]string) (*Request, *Response) {
+func (r *Route) wrapRequestResponse(httpWriter http.ResponseWriter, httpRequest *http.Request) (*Request, *Response) {
+	params := r.extractParameters(httpRequest.URL.Path)
 	wrappedRequest := NewRequest(httpRequest)
-	wrappedRequest.pathParameters = pathParams
-	wrappedRequest.selectedRoute = r
+	wrappedRequest.pathParameters = params
+	wrappedRequest.selectedRoutePath = r.Path
 	wrappedResponse := NewResponse(httpWriter)
 	wrappedResponse.requestAccept = httpRequest.Header.Get(HEADER_Accept)
 	wrappedResponse.routeProduces = r.Produces
 	return wrappedRequest, wrappedResponse
 }
 
-func stringTrimSpaceCutset(r rune) bool {
-	return r == ' '
+// dispatchWithFilters call the function after passing through its own filters
+func (r *Route) dispatchWithFilters(wrappedRequest *Request, wrappedResponse *Response) {
+	if len(r.Filters) > 0 {
+		chain := FilterChain{Filters: r.Filters, Target: r.Function}
+		chain.ProcessFilter(wrappedRequest, wrappedResponse)
+	} else {
+		// unfiltered
+		r.Function(wrappedRequest, wrappedResponse)
+	}
 }
 
 // Return whether the mimeType matches to what this Route can produce.
 func (r Route) matchesAccept(mimeTypesWithQuality string) bool {
-	remaining := mimeTypesWithQuality
-	for {
-		var mimeType string
-		if end := strings.Index(remaining, ","); end == -1 {
-			mimeType, remaining = remaining, ""
+	parts := strings.Split(mimeTypesWithQuality, ",")
+	for _, each := range parts {
+		var withoutQuality string
+		if strings.Contains(each, ";") {
+			withoutQuality = strings.Split(each, ";")[0]
 		} else {
-			mimeType, remaining = remaining[:end], remaining[end+1:]
+			withoutQuality = each
 		}
-		if quality := strings.Index(mimeType, ";"); quality != -1 {
-			mimeType = mimeType[:quality]
-		}
-		mimeType = strings.TrimFunc(mimeType, stringTrimSpaceCutset)
-		if mimeType == "*/*" {
+		// trim before compare
+		withoutQuality = strings.Trim(withoutQuality, " ")
+		if withoutQuality == "*/*" {
 			return true
 		}
 		for _, producibleType := range r.Produces {
-			if producibleType == "*/*" || producibleType == mimeType {
+			if producibleType == "*/*" || producibleType == withoutQuality {
 				return true
 			}
 		}
-		if len(remaining) == 0 {
-			return false
-		}
 	}
+	return false
 }
 
 // Return whether this Route can consume content with a type specified by mimeTypes (can be empty).
@@ -119,73 +97,87 @@ func (r Route) matchesContentType(mimeTypes string) bool {
 	}
 
 	if len(mimeTypes) == 0 {
-		// idempotent methods with (most-likely or guaranteed) empty content match missing Content-Type
+		// idempotent methods with (most-likely or garanteed) empty content match missing Content-Type
 		m := r.Method
-		// if route specifies less or non-idempotent methods then use that
-		if len(r.allowedMethodsWithoutContentType) > 0 {
-			for _, each := range r.allowedMethodsWithoutContentType {
-				if m == each {
-					return true
-				}
-			}
-		} else {
-			if m == "GET" || m == "HEAD" || m == "OPTIONS" || m == "DELETE" || m == "TRACE" {
-				return true
-			}
+		if m == "GET" || m == "HEAD" || m == "OPTIONS" || m == "DELETE" || m == "TRACE" {
+			return true
 		}
 		// proceed with default
 		mimeTypes = MIME_OCTET
 	}
 
-	remaining := mimeTypes
-	for {
-		var mimeType string
-		if end := strings.Index(remaining, ","); end == -1 {
-			mimeType, remaining = remaining, ""
+	parts := strings.Split(mimeTypes, ",")
+	for _, each := range parts {
+		var contentType string
+		if strings.Contains(each, ";") {
+			contentType = strings.Split(each, ";")[0]
 		} else {
-			mimeType, remaining = remaining[:end], remaining[end+1:]
+			contentType = each
 		}
-		if quality := strings.Index(mimeType, ";"); quality != -1 {
-			mimeType = mimeType[:quality]
-		}
-		mimeType = strings.TrimFunc(mimeType, stringTrimSpaceCutset)
+		// trim before compare
+		contentType = strings.Trim(contentType, " ")
 		for _, consumeableType := range r.Consumes {
-			if consumeableType == "*/*" || consumeableType == mimeType {
+			if consumeableType == "*/*" || consumeableType == contentType {
 				return true
 			}
 		}
-		if len(remaining) == 0 {
-			return false
+	}
+	return false
+}
+
+// Extract the parameters from the request url path
+func (r Route) extractParameters(urlPath string) map[string]string {
+	urlParts := tokenizePath(urlPath)
+	pathParameters := map[string]string{}
+	for i, key := range r.pathParts {
+		var value string
+		if i >= len(urlParts) {
+			value = ""
+		} else {
+			value = urlParts[i]
+		}
+		if strings.HasPrefix(key, "{") { // path-parameter
+			if colon := strings.Index(key, ":"); colon != -1 {
+				// extract by regex
+				regPart := key[colon+1 : len(key)-1]
+				keyPart := key[1:colon]
+				if regPart == "*" {
+					pathParameters[keyPart] = untokenizePath(i, urlParts)
+					break
+				} else {
+					pathParameters[keyPart] = value
+				}
+			} else {
+				// without enclosing {}
+				pathParameters[key[1:len(key)-1]] = value
+			}
 		}
 	}
+	return pathParameters
+}
+
+// Untokenize back into an URL path using the slash separator
+func untokenizePath(offset int, parts []string) string {
+	var buffer bytes.Buffer
+	for p := offset; p < len(parts); p++ {
+		buffer.WriteString(parts[p])
+		// do not end
+		if p < len(parts)-1 {
+			buffer.WriteString("/")
+		}
+	}
+	return buffer.String()
 }
 
 // Tokenize an URL path using the slash separator ; the result does not have empty tokens
 func tokenizePath(path string) []string {
 	if "/" == path {
-		return nil
+		return []string{}
 	}
-	if TrimRightSlashEnabled {
-		// 3.9.0
-		return strings.Split(strings.Trim(path, "/"), "/")
-	} else {
-		// 3.10.2
-		return strings.Split(strings.TrimLeft(path, "/"), "/")
-	}
+	return strings.Split(strings.Trim(path, "/"), "/")
 }
 
 // for debugging
-func (r *Route) String() string {
+func (r Route) String() string {
 	return r.Method + " " + r.Path
 }
-
-// EnableContentEncoding (default=false) allows for GZIP or DEFLATE encoding of responses. Overrides the container.contentEncodingEnabled value.
-func (r *Route) EnableContentEncoding(enabled bool) {
-	r.contentEncodingEnabled = &enabled
-}
-
-// TrimRightSlashEnabled controls whether
-// - path on route building is using path.Join
-// - the path of the incoming request is trimmed of its slash suffux.
-// Value of true matches the behavior of <= 3.9.0
-var TrimRightSlashEnabled = true

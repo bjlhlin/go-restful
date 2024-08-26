@@ -17,7 +17,7 @@ func TestGzip(t *testing.T) {
 	httpRequest, _ := http.NewRequest("GET", "/test", nil)
 	httpRequest.Header.Set("Accept-Encoding", "gzip,deflate")
 	httpWriter := httptest.NewRecorder()
-	wanted, encoding := wantsCompressedResponse(httpRequest, httpWriter)
+	wanted, encoding := wantsCompressedResponse(httpRequest)
 	if !wanted {
 		t.Fatal("should accept gzip")
 	}
@@ -51,7 +51,7 @@ func TestDeflate(t *testing.T) {
 	httpRequest, _ := http.NewRequest("GET", "/test", nil)
 	httpRequest.Header.Set("Accept-Encoding", "deflate,gzip")
 	httpWriter := httptest.NewRecorder()
-	wanted, encoding := wantsCompressedResponse(httpRequest, httpWriter)
+	wanted, encoding := wantsCompressedResponse(httpRequest)
 	if !wanted {
 		t.Fatal("should accept deflate")
 	}
@@ -94,6 +94,7 @@ func TestGzipDecompressRequestBody(t *testing.T) {
 	httpRequest.Header.Set("Content-Encoding", "gzip")
 	req.Request = httpRequest
 
+	doCacheReadEntityBytes = false
 	doc := make(map[string]interface{})
 	req.ReadEntity(&doc)
 
@@ -116,22 +117,11 @@ func TestZlibDecompressRequestBody(t *testing.T) {
 	httpRequest.Header.Set("Content-Encoding", "deflate")
 	req.Request = httpRequest
 
+	doCacheReadEntityBytes = false
 	doc := make(map[string]interface{})
 	req.ReadEntity(&doc)
 
 	if got, want := doc["msg"], "hi"; got != want {
 		t.Errorf("got %v want %v", got, want)
-	}
-}
-
-func TestNoDuplicateCompressedResponse(t *testing.T) {
-	EnableContentEncoding = true
-	httpRequest, _ := http.NewRequest("GET", "/test", nil)
-	httpRequest.Header.Set("Accept-Encoding", "deflate,gzip")
-	httpWriter := httptest.NewRecorder()
-	httpWriter.HeaderMap.Set("content-encoding", "gzip")
-	do, _ := wantsCompressedResponse(httpRequest, httpWriter)
-	if do {
-		t.Fail()
 	}
 }

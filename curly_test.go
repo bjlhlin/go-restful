@@ -94,51 +94,25 @@ func Test_detectWebService(t *testing.T) {
 	}
 }
 
-func Test_detectWebServiceWithRegexPath(t *testing.T) {
-	router := CurlyRouter{}
-	holaWS := new(WebService).Path("/{:hola}")
-	helloWS := new(WebService).Path("/{:hello}")
-
-	var wss = []*WebService{holaWS, helloWS}
-
-	holaJuanInTokens := tokenizePath("/hola/juan")
-	selected := router.detectWebService(holaJuanInTokens, wss)
-	if selected != holaWS {
-		t.Fatalf("expected holaWS, got %v", selected.rootPath)
-	}
-
-	helloJuanInTokens := tokenizePath("/hello/juan")
-	selected = router.detectWebService(helloJuanInTokens, wss)
-	if selected != helloWS {
-		t.Fatalf("expected helloWS, got %v", selected.rootPath)
-	}
-}
-
 var routeMatchers = []struct {
-	route         string
-	path          string
-	matches       bool
-	paramCount    int
-	staticCount   int
-	hasCustomVerb bool
+	route       string
+	path        string
+	matches     bool
+	paramCount  int
+	staticCount int
 }{
 	// route, request-path
-	{"/a", "/a", true, 0, 1, false},
-	{"/a", "/b", false, 0, 0, false},
-	{"/a", "/b", false, 0, 0, false},
-	{"/a/{b}/c/", "/a/2/c", true, 1, 2, false},
-	{"/{a}/{b}/{c}/", "/a/b", false, 0, 0, false},
-	{"/{x:*}", "/", false, 0, 0, false},
-	{"/{x:*}", "/a", true, 1, 0, false},
-	{"/{x:*}", "/a/b", true, 1, 0, false},
-	{"/a/{x:*}", "/a/b", true, 1, 1, false},
-	{"/a/{x:[A-Z][A-Z]}", "/a/ZX", true, 1, 1, false},
-	{"/basepath/{resource:*}", "/basepath/some/other/location/test.xml", true, 1, 1, false},
-	{"/resources:run", "/resources:run", true, 0, 2, true},
-	{"/resources:run", "/user:run", false, 0, 0, true},
-	{"/resources:run", "/resources", false, 0, 0, true},
-	{"/users/{userId:^prefix-}:start", "/users/prefix-}:startUserId", false, 0, 0, true},
-	{"/users/{userId:^prefix-}:start", "/users/prefix-userId:start", true, 1, 2, true},
+	{"/a", "/a", true, 0, 1},
+	{"/a", "/b", false, 0, 0},
+	{"/a", "/b", false, 0, 0},
+	{"/a/{b}/c/", "/a/2/c", true, 1, 2},
+	{"/{a}/{b}/{c}/", "/a/b", false, 0, 0},
+	{"/{x:*}", "/", false, 0, 0},
+	{"/{x:*}", "/a", true, 1, 0},
+	{"/{x:*}", "/a/b", true, 1, 0},
+	{"/a/{x:*}", "/a/b", true, 1, 1},
+	{"/a/{x:[A-Z][A-Z]}", "/a/ZX", true, 1, 1},
+	{"/basepath/{resource:*}", "/basepath/some/other/location/test.xml", true, 1, 1},
 }
 
 // clear && go test -v -test.run Test_matchesRouteByPathTokens ...restful
@@ -147,7 +121,7 @@ func Test_matchesRouteByPathTokens(t *testing.T) {
 	for i, each := range routeMatchers {
 		routeToks := tokenizePath(each.route)
 		reqToks := tokenizePath(each.path)
-		matches, pCount, sCount := router.matchesRouteByPathTokens(routeToks, reqToks, each.hasCustomVerb)
+		matches, pCount, sCount := router.matchesRouteByPathTokens(routeToks, reqToks)
 		if matches != each.matches {
 			t.Fatalf("[%d] unexpected matches outcome route:%s, path:%s, matches:%v", i, each.route, each.path, matches)
 		}
@@ -184,24 +158,17 @@ func TestExtractParameters_Wildcard3(t *testing.T) {
 	}
 }
 
-func TestExtractParameters_Wildcard4(t *testing.T) {
-	params := doExtractParams("/static/{var:*}/sub", 3, "/static/test/sub", t)
-	if params["var"] != "test/sub" {
-		t.Errorf("parameter mismatch var: %s", params["var"])
-	}
-}
-
 // clear && go test -v -test.run TestCurly_ISSUE_34 ...restful
 func TestCurly_ISSUE_34(t *testing.T) {
 	ws1 := new(WebService).Path("/")
 	ws1.Route(ws1.GET("/{type}/{id}").To(curlyDummy))
 	ws1.Route(ws1.GET("/network/{id}").To(curlyDummy))
-	croutes := CurlyRouter{}.selectRoutes(ws1, tokenizePath("/network/12"))
-	if len(croutes) != 2 {
+	routes := CurlyRouter{}.selectRoutes(ws1, tokenizePath("/network/12"))
+	if len(routes) != 2 {
 		t.Fatal("expected 2 routes")
 	}
-	if got, want := croutes[0].route.Path, "/network/{id}"; got != want {
-		t.Errorf("got %v want %v", got, want)
+	if routes[0].Path != "/network/{id}" {
+		t.Error("first is", routes[0].Path)
 	}
 }
 
@@ -210,12 +177,12 @@ func TestCurly_ISSUE_34_2(t *testing.T) {
 	ws1 := new(WebService)
 	ws1.Route(ws1.GET("/network/{id}").To(curlyDummy))
 	ws1.Route(ws1.GET("/{type}/{id}").To(curlyDummy))
-	croutes := CurlyRouter{}.selectRoutes(ws1, tokenizePath("/network/12"))
-	if len(croutes) != 2 {
+	routes := CurlyRouter{}.selectRoutes(ws1, tokenizePath("/network/12"))
+	if len(routes) != 2 {
 		t.Fatal("expected 2 routes")
 	}
-	if got, want := croutes[0].route.Path, "/network/{id}"; got != want {
-		t.Errorf("got %v want %v", got, want)
+	if routes[0].Path != "/network/{id}" {
+		t.Error("first is", routes[0].Path)
 	}
 }
 

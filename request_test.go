@@ -18,20 +18,6 @@ func TestQueryParameter(t *testing.T) {
 	}
 }
 
-func TestQueryParameters(t *testing.T) {
-	hreq := http.Request{Method: "GET"}
-	hreq.URL, _ = url.Parse("http://www.google.com/search?q=foo&q=bar")
-	rreq := Request{Request: &hreq}
-	parameters := rreq.QueryParameters("q")
-	if len(parameters) != 2 {
-		t.Fatalf("len(q)!=2 %#v", rreq)
-	} else {
-		if parameters[0] != "foo" || parameters[1] != "bar" {
-			t.Fatalf("invalid content: required [\"foo\" \"bar\", got: %#v", parameters)
-		}
-	}
-}
-
 type Anything map[string]interface{}
 
 type Number struct {
@@ -41,6 +27,38 @@ type Number struct {
 
 type Sample struct {
 	Value string
+}
+
+func TestReadEntityXmlCached(t *testing.T) {
+	SetCacheReadEntity(true)
+	bodyReader := strings.NewReader("<Sample><Value>42</Value></Sample>")
+	httpRequest, _ := http.NewRequest("GET", "/test", bodyReader)
+	httpRequest.Header.Set("Content-Type", "application/xml")
+	request := &Request{Request: httpRequest}
+	sam := new(Sample)
+	request.ReadEntity(sam)
+	if sam.Value != "42" {
+		t.Fatal("read failed")
+	}
+	if request.bodyContent == nil {
+		t.Fatal("no expected cached bytes found")
+	}
+}
+
+func TestReadEntityXmlNonCached(t *testing.T) {
+	SetCacheReadEntity(false)
+	bodyReader := strings.NewReader("<Sample><Value>42</Value></Sample>")
+	httpRequest, _ := http.NewRequest("GET", "/test", bodyReader)
+	httpRequest.Header.Set("Content-Type", "application/xml")
+	request := &Request{Request: httpRequest}
+	sam := new(Sample)
+	request.ReadEntity(sam)
+	if sam.Value != "42" {
+		t.Fatal("read failed")
+	}
+	if request.bodyContent != nil {
+		t.Fatal("unexpected cached bytes found")
+	}
 }
 
 func TestReadEntityJson(t *testing.T) {
@@ -68,6 +86,37 @@ func TestReadEntityJsonCharset(t *testing.T) {
 }
 
 func TestReadEntityJsonNumber(t *testing.T) {
+	SetCacheReadEntity(true)
+	bodyReader := strings.NewReader(`{"Value" : 4899710515899924123}`)
+	httpRequest, _ := http.NewRequest("GET", "/test", bodyReader)
+	httpRequest.Header.Set("Content-Type", "application/json")
+	request := &Request{Request: httpRequest}
+	any := make(Anything)
+	request.ReadEntity(&any)
+	number, ok := any["Value"].(json.Number)
+	if !ok {
+		t.Fatal("read failed")
+	}
+	vint, err := number.Int64()
+	if err != nil {
+		t.Fatal("convert failed")
+	}
+	if vint != 4899710515899924123 {
+		t.Fatal("read failed")
+	}
+	vfloat, err := number.Float64()
+	if err != nil {
+		t.Fatal("convert failed")
+	}
+	// match the default behaviour
+	vstring := strconv.FormatFloat(vfloat, 'e', 15, 64)
+	if vstring != "4.899710515899924e+18" {
+		t.Fatal("convert float64 failed")
+	}
+}
+
+func TestReadEntityJsonNumberNonCached(t *testing.T) {
+	SetCacheReadEntity(false)
 	bodyReader := strings.NewReader(`{"Value" : 4899710515899924123}`)
 	httpRequest, _ := http.NewRequest("GET", "/test", bodyReader)
 	httpRequest.Header.Set("Content-Type", "application/json")

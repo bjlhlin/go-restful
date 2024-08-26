@@ -4,7 +4,7 @@ package restful
 // Use of this source code is governed by a license
 // that can be found in the LICENSE file.
 import (
-	"github.com/emicklei/go-restful/v3/log"
+	"github.com/emicklei/go-restful/log"
 )
 
 var trace bool = false
@@ -21,7 +21,7 @@ func TraceLogger(logger log.StdLogger) {
 	EnableTracing(logger != nil)
 }
 
-// SetLogger exposes the setter for the global logger on the top-level package
+// expose the setter for the global logger on the top-level package
 func SetLogger(customLogger log.StdLogger) {
 	log.SetLogger(customLogger)
 }

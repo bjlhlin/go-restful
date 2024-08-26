@@ -5,7 +5,6 @@ package restful
 // that can be found in the LICENSE file.
 
 import (
-	"regexp"
 	"strconv"
 	"strings"
 )
@@ -18,28 +17,13 @@ import (
 // http://enable-cors.org/server.html
 // http://www.html5rocks.com/en/tutorials/cors/#toc-handling-a-not-so-simple-request
 type CrossOriginResourceSharing struct {
-	ExposeHeaders []string // list of Header names
-
-	// AllowedHeaders is alist of Header names. Checking is case-insensitive.
-	// The list may contain the special wildcard string ".*" ; all is allowed
-	AllowedHeaders []string
-
-	// AllowedDomains is a list of allowed values for Http Origin.
-	// The list may contain the special wildcard string ".*" ; all is allowed
-	// If empty all are allowed.
-	AllowedDomains []string
-
-	// AllowedDomainFunc is optional and is a function that will do the check
-	// when the origin is not part of the AllowedDomains and it does not contain the wildcard ".*".
-	AllowedDomainFunc func(origin string) bool
-
-	// AllowedMethods is either empty or has a list of http methods names. Checking is case-insensitive.
+	ExposeHeaders  []string // list of Header names
+	AllowedHeaders []string // list of Header names
+	AllowedDomains []string // list of allowed values for Http Origin. If empty all are allowed.
 	AllowedMethods []string
 	MaxAge         int // number of seconds before requiring new Options request
 	CookiesAllowed bool
 	Container      *Container
-
-	allowedOriginPatterns []*regexp.Regexp // internal field for origin regexp check.
 }
 
 // Filter is a filter function that implements the CORS flow as documented on http://enable-cors.org/server.html
@@ -53,12 +37,21 @@ func (c CrossOriginResourceSharing) Filter(req *Request, resp *Response, chain *
 		chain.ProcessFilter(req, resp)
 		return
 	}
-	if !c.isOriginAllowed(origin) { // check whether this origin is allowed
-		if trace {
-			traceLogger.Printf("HTTP Origin:%s is not part of %v, neither matches any part of %v", origin, c.AllowedDomains, c.allowedOriginPatterns)
+	if len(c.AllowedDomains) > 0 { // if provided then origin must be included
+		included := false
+		for _, each := range c.AllowedDomains {
+			if each == origin {
+				included = true
+				break
+			}
 		}
-		chain.ProcessFilter(req, resp)
-		return
+		if !included {
+			if trace {
+				traceLogger.Printf("HTTP Origin:%s is not part of %v", origin, c.AllowedDomains)
+			}
+			chain.ProcessFilter(req, resp)
+			return
+		}
 	}
 	if req.Request.Method != "OPTIONS" {
 		c.doActualRequest(req, resp)
@@ -81,11 +74,7 @@ func (c CrossOriginResourceSharing) doActualRequest(req *Request, resp *Response
 
 func (c *CrossOriginResourceSharing) doPreflightRequest(req *Request, resp *Response) {
 	if len(c.AllowedMethods) == 0 {
-		if c.Container == nil {
-			c.AllowedMethods = DefaultContainer.computeAllowedMethods(req)
-		} else {
-			c.AllowedMethods = c.Container.computeAllowedMethods(req)
-		}
+		c.AllowedMethods = c.Container.computeAllowedMethods(req)
 	}
 
 	acrm := req.Request.Header.Get(HEADER_AccessControlRequestMethod)
@@ -132,24 +121,17 @@ func (c CrossOriginResourceSharing) isOriginAllowed(origin string) bool {
 	if len(origin) == 0 {
 		return false
 	}
-	lowerOrigin := strings.ToLower(origin)
 	if len(c.AllowedDomains) == 0 {
-		if c.AllowedDomainFunc != nil {
-			return c.AllowedDomainFunc(lowerOrigin)
-		}
 		return true
 	}
-
-	// exact match on each allowed domain
-	for _, domain := range c.AllowedDomains {
-		if domain == ".*" || strings.ToLower(domain) == lowerOrigin {
-			return true
+	allowed := false
+	for _, each := range c.AllowedDomains {
+		if each == origin {
+			allowed = true
+			break
 		}
 	}
-	if c.AllowedDomainFunc != nil {
-		return c.AllowedDomainFunc(origin)
-	}
-	return false
+	return allowed
 }
 
 func (c CrossOriginResourceSharing) setAllowOriginHeader(req *Request, resp *Response) {
@@ -183,9 +165,6 @@ func (c CrossOriginResourceSharing) isValidAccessControlRequestMethod(method str
 func (c CrossOriginResourceSharing) isValidAccessControlRequestHeader(header string) bool {
 	for _, each := range c.AllowedHeaders {
 		if strings.ToLower(each) == strings.ToLower(header) {
-			return true
-		}
-		if each == "*" {
 			return true
 		}
 	}

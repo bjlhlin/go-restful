@@ -1,7 +1,6 @@
 package restful
 
 import (
-	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -45,8 +44,6 @@ func TestCapturePanic(t *testing.T) {
 	httpRequest, _ := http.NewRequest("GET", "http://here.com/fire", nil)
 	httpRequest.Header.Set("Accept", "*/*")
 	httpWriter := httptest.NewRecorder()
-	// override the default here
-	DefaultContainer.DoNotRecover(false)
 	DefaultContainer.dispatch(httpWriter, httpRequest)
 	if 500 != httpWriter.Code {
 		t.Error("500 expected on fire")
@@ -90,54 +87,6 @@ func TestMethodNotAllowed(t *testing.T) {
 	}
 }
 
-func TestMethodNotAllowed_Issue435(t *testing.T) {
-	tearDown()
-	Add(newPutGetDeleteWithDuplicateService())
-	httpRequest, _ := http.NewRequest("POST", "http://here/thing", nil)
-	httpRequest.Header.Set("Accept", "*/*")
-	httpWriter := httptest.NewRecorder()
-	DefaultContainer.dispatch(httpWriter, httpRequest)
-	if 405 != httpWriter.Code {
-		t.Error("405 expected method not allowed")
-	}
-	if "PUT, GET, DELETE" != httpWriter.Header().Get("Allow") {
-		t.Error("405 expected Allowed header got ", httpWriter.Header())
-	}
-}
-
-func TestNotAcceptable_Issue434(t *testing.T) {
-	tearDown()
-	Add(newGetPlainTextOrJsonService())
-	httpRequest, _ := http.NewRequest("GET", "http://here.com/get", nil)
-	httpRequest.Header.Set("Accept", "application/toml")
-	httpWriter := httptest.NewRecorder()
-	DefaultContainer.dispatch(httpWriter, httpRequest)
-	if 406 != httpWriter.Code {
-		t.Error("406 expected not acceptable", httpWriter.Code)
-	}
-	expected := `406: Not Acceptable
-
-Available representations: text/plain, application/json`
-	body, _ := ioutil.ReadAll(httpWriter.Body)
-	if expected != string(body) {
-		t.Errorf("Expected body:\n%s\ngot:\n%s\n", expected, string(body))
-	}
-}
-
-func TestUnsupportedMedia_Issue492(t *testing.T) {
-	tearDown()
-	Add(newPostTestService())
-	for _, method := range []string{"POST", "PUT", "PATCH"} {
-		httpRequest, _ := http.NewRequest(method, "http://here.com/test", nil)
-		httpRequest.Header.Set("Accept", "application/json")
-		httpWriter := httptest.NewRecorder()
-		DefaultContainer.dispatch(httpWriter, httpRequest)
-		if 415 != httpWriter.Code {
-			t.Errorf("[%s] 415 expected got %d", method, httpWriter.Code)
-		}
-	}
-}
-
 func TestSelectedRoutePath_Issue100(t *testing.T) {
 	tearDown()
 	Add(newSelectedRouteTestingService())
@@ -158,17 +107,6 @@ func TestContentType415_Issue170(t *testing.T) {
 	DefaultContainer.dispatch(httpWriter, httpRequest)
 	if 200 != httpWriter.Code {
 		t.Errorf("Expected 200, got %d", httpWriter.Code)
-	}
-}
-
-func TestNoContentTypePOST(t *testing.T) {
-	tearDown()
-	Add(newPostNoConsumesService())
-	httpRequest, _ := http.NewRequest("POST", "http://here.com/post", nil)
-	httpWriter := httptest.NewRecorder()
-	DefaultContainer.dispatch(httpWriter, httpRequest)
-	if 204 != httpWriter.Code {
-		t.Errorf("Expected 204, got %d", httpWriter.Code)
 	}
 }
 
@@ -233,41 +171,6 @@ func TestRemoveRoute(t *testing.T) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
-func TestRemoveLastRoute(t *testing.T) {
-	tearDown()
-	TraceLogger(testLogger{t})
-	ws := newGetPlainTextOrJsonServiceMultiRoute()
-	Add(ws)
-	httpRequest, _ := http.NewRequest("GET", "http://here.com/get", nil)
-	httpRequest.Header.Set("Accept", "text/plain")
-	httpWriter := httptest.NewRecorder()
-	DefaultContainer.dispatch(httpWriter, httpRequest)
-	if got, want := httpWriter.Code, 200; got != want {
-		t.Errorf("got %v, want %v", got, want)
-	}
-
-	// dynamic apis are disabled, should error and do nothing
-	if err := ws.RemoveRoute("/get", "GET"); err == nil {
-		t.Error("unexpected non-error")
-	}
-
-	httpWriter = httptest.NewRecorder()
-	DefaultContainer.dispatch(httpWriter, httpRequest)
-	if got, want := httpWriter.Code, 200; got != want {
-		t.Errorf("got %v, want %v", got, want)
-	}
-
-	ws.SetDynamicRoutes(true)
-	if err := ws.RemoveRoute("/get", "GET"); err != nil {
-		t.Errorf("unexpected error %v", err)
-	}
-
-	httpWriter = httptest.NewRecorder()
-	DefaultContainer.dispatch(httpWriter, httpRequest)
-	if got, want := httpWriter.Code, 404; got != want {
-		t.Errorf("got %v, want %v", got, want)
-	}
-}
 
 // go test -v -test.run TestContentTypeOctet_Issue170 ...restful
 func TestContentTypeOctet_Issue170(t *testing.T) {
@@ -290,43 +193,6 @@ func TestContentTypeOctet_Issue170(t *testing.T) {
 	}
 }
 
-type exampleBody struct{}
-
-func TestParameterDataTypeDefaults(t *testing.T) {
-	tearDown()
-	ws := new(WebService)
-	route := ws.POST("/post").Reads(&exampleBody{}, "")
-	if route.parameters[0].data.DataType != "*restful.exampleBody" {
-		t.Errorf("body parameter incorrect name: %#v", route.parameters[0].data)
-	}
-}
-
-func TestParameterDataTypeCustomization(t *testing.T) {
-	tearDown()
-	ws := new(WebService)
-	ws.TypeNameHandler(func(sample interface{}) string {
-		return "my.custom.type.name"
-	})
-	route := ws.POST("/post").Reads(&exampleBody{}, "")
-	if route.parameters[0].data.DataType != "my.custom.type.name" {
-		t.Errorf("body parameter incorrect name: %#v", route.parameters[0].data)
-	}
-}
-
-func TestOptionsShortcut(t *testing.T) {
-	tearDown()
-	ws := new(WebService).Path("")
-	ws.Route(ws.OPTIONS("/options").To(return200))
-	Add(ws)
-
-	httpRequest, _ := http.NewRequest("OPTIONS", "http://here.com/options", nil)
-	httpWriter := httptest.NewRecorder()
-	DefaultContainer.dispatch(httpWriter, httpRequest)
-	if got, want := httpWriter.Code, 200; got != want {
-		t.Errorf("got %v, want %v", got, want)
-	}
-}
-
 func newPanicingService() *WebService {
 	ws := new(WebService).Path("")
 	ws.Route(ws.GET("/fire").To(doPanic))
@@ -336,15 +202,6 @@ func newPanicingService() *WebService {
 func newGetOnlyService() *WebService {
 	ws := new(WebService).Path("")
 	ws.Route(ws.GET("/get").To(doPanic))
-	return ws
-}
-
-func newPutGetDeleteWithDuplicateService() *WebService {
-	ws := new(WebService).Path("")
-	ws.Route(ws.PUT("/thing").To(doPanic))
-	ws.Route(ws.GET("/thing").To(doPanic))
-	ws.Route(ws.DELETE("/thing").To(doPanic))
-	ws.Route(ws.GET("/thing").To(doPanic))
 	return ws
 }
 
@@ -369,34 +226,10 @@ func newGetPlainTextOrJsonService() *WebService {
 	return ws
 }
 
-func newGetPlainTextOrJsonServiceMultiRoute() *WebService {
-	ws := new(WebService).Path("")
-	ws.Produces("text/plain", "application/json")
-	ws.Route(ws.GET("/get").To(doNothing))
-	ws.Route(ws.GET("/status").To(doNothing))
-	return ws
-}
-
 func newGetConsumingOctetStreamService() *WebService {
 	ws := new(WebService).Path("")
 	ws.Consumes("application/octet-stream")
 	ws.Route(ws.GET("/get").To(doNothing))
-	return ws
-}
-
-func newPostNoConsumesService() *WebService {
-	ws := new(WebService).Path("")
-	ws.Route(ws.POST("/post").To(return204))
-	return ws
-}
-
-func newPostTestService() *WebService {
-	ws := new(WebService).Path("")
-	ws.Consumes("application/json")
-	ws.Produces("application/json")
-	ws.Route(ws.POST("/test").To(doNothing))
-	ws.Route(ws.PUT("/test").To(doNothing))
-	ws.Route(ws.PATCH("/test").To(doNothing))
 	return ws
 }
 
@@ -407,10 +240,6 @@ func newSelectedRouteTestingService() *WebService {
 }
 
 func selectedRouteChecker(req *Request, resp *Response) {
-	if req.SelectedRoute() == nil {
-		resp.InternalServerError()
-		return
-	}
 	if req.SelectedRoutePath() != pathGetFriends {
 		resp.InternalServerError()
 	}
@@ -422,12 +251,4 @@ func doPanic(req *Request, resp *Response) {
 }
 
 func doNothing(req *Request, resp *Response) {
-}
-
-func return204(req *Request, resp *Response) {
-	resp.WriteHeader(204)
-}
-
-func return200(req *Request, resp *Response) {
-	resp.WriteHeader(200)
 }

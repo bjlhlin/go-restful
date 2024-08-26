@@ -29,7 +29,7 @@ func TestCORSFilter_Preflight(t *testing.T) {
 	httpRequest.Header.Set(HEADER_AccessControlRequestHeaders, "X-Custom-Header, X-Additional-Header")
 
 	httpWriter := httptest.NewRecorder()
-	DefaultContainer.Dispatch(httpWriter, httpRequest)
+	DefaultContainer.dispatch(httpWriter, httpRequest)
 
 	actual := httpWriter.Header().Get(HEADER_AccessControlAllowOrigin)
 	if "http://api.bob.com" != actual {
@@ -78,7 +78,7 @@ func TestCORSFilter_Actual(t *testing.T) {
 	httpRequest.Header.Set("X-Custom-Header", "value")
 
 	httpWriter := httptest.NewRecorder()
-	DefaultContainer.Dispatch(httpWriter, httpRequest)
+	DefaultContainer.dispatch(httpWriter, httpRequest)
 	actual := httpWriter.Header().Get(HEADER_AccessControlAllowOrigin)
 	if "http://api.bob.com" != actual {
 		t.Fatal("expected: http://api.bob.com but got:" + actual)
@@ -89,15 +89,11 @@ func TestCORSFilter_Actual(t *testing.T) {
 }
 
 var allowedDomainInput = []struct {
-	domains []string
-	origin  string
-	allowed bool
+	domains  []string
+	origin   string
+	accepted bool
 }{
 	{[]string{}, "http://anything.com", true},
-	{[]string{"example.com"}, "example.com", true},
-	{[]string{"example.com"}, "not-allowed", false},
-	{[]string{"not-matching.com", "example.com"}, "example.com", true},
-	{[]string{".*"}, "example.com", true},
 }
 
 // go test -v -test.run TestCORSFilter_AllowedDomains ...restful
@@ -117,49 +113,13 @@ func TestCORSFilter_AllowedDomains(t *testing.T) {
 		httpRequest, _ := http.NewRequest("PUT", "http://api.his.com/cors", nil)
 		httpRequest.Header.Set(HEADER_Origin, each.origin)
 		httpWriter := httptest.NewRecorder()
-		DefaultContainer.Dispatch(httpWriter, httpRequest)
+		DefaultContainer.dispatch(httpWriter, httpRequest)
 		actual := httpWriter.Header().Get(HEADER_AccessControlAllowOrigin)
-		if actual != each.origin && each.allowed {
-			t.Error("expected to be accepted", each)
+		if actual != each.origin && each.accepted {
+			t.Fatal("expected to be accepted")
 		}
-		if actual == each.origin && !each.allowed {
-			t.Error("did not expect to be accepted")
+		if actual == each.origin && !each.accepted {
+			t.Fatal("did not expect to be accepted")
 		}
-	}
-}
-
-func TestCORSFilter_AllowedDomainFunc(t *testing.T) {
-	cors := CrossOriginResourceSharing{
-		AllowedDomains: []string{"here", "there"},
-		AllowedDomainFunc: func(origin string) bool {
-			return "where" == origin
-		},
-	}
-	if got, want := cors.isOriginAllowed("here"), true; got != want {
-		t.Errorf("got [%v:%T] want [%v:%T]", got, got, want, want)
-	}
-	if got, want := cors.isOriginAllowed("HERE"), true; got != want {
-		t.Errorf("got [%v:%T] want [%v:%T]", got, got, want, want)
-	}
-	if got, want := cors.isOriginAllowed("there"), true; got != want {
-		t.Errorf("got [%v:%T] want [%v:%T]", got, got, want, want)
-	}
-	if got, want := cors.isOriginAllowed("where"), true; got != want {
-		t.Errorf("got [%v:%T] want [%v:%T]", got, got, want, want)
-	}
-	if got, want := cors.isOriginAllowed("nowhere"), false; got != want {
-		t.Errorf("got [%v:%T] want [%v:%T]", got, got, want, want)
-	}
-	// just func
-	cors.AllowedDomains = []string{}
-	if got, want := cors.isOriginAllowed("here"), false; got != want {
-		t.Errorf("got [%v:%T] want [%v:%T]", got, got, want, want)
-	}
-	if got, want := cors.isOriginAllowed("where"), true; got != want {
-		t.Errorf("got [%v:%T] want [%v:%T]", got, got, want, want)
-	}
-	// empty domain
-	if got, want := cors.isOriginAllowed(""), false; got != want {
-		t.Errorf("got [%v:%T] want [%v:%T]", got, got, want, want)
 	}
 }
